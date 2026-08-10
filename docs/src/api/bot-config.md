@@ -124,20 +124,32 @@ println!("Scan: {url}");
 
 // 3. Poll until the user scans it
 loop {
-    match client.check_qr_login(token_bytes.clone()).await? {
-        Some(username) => {
+    match client.check_qr_login(token_bytes.clone()).await {
+        Ok(Some(username)) => {
             println!("Logged in as: {username}");
             client.save_session().await?;
             break;
         }
-        None => {
+        Ok(None) => {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
+        Err(SignInError::PasswordRequired(token)) => {
+            // Account has 2FA enabled; prompt for the password and finish
+            // the login with check_password instead of polling further.
+            let password = prompt_for_password();
+            let username = client.check_password(*token, password).await?;
+            println!("Logged in as: {username}");
+            client.save_session().await?;
+            break;
+        }
+        Err(e) => return Err(e.into()),
     }
 }
 ```
 
-`export_login_token` handles DC migration automatically. Returns `(vec![], 0)` if the user already scanned before you called it.
+`check_qr_login` handles DC migration internally, retrying the check once on
+the migrated DC. `export_login_token` also handles migration automatically
+and returns `(vec![], 0)` if the user already scanned before you called it.
 
 ---
 

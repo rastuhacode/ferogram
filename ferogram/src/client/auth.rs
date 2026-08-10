@@ -610,27 +610,114 @@ impl Client {
     /// Check whether a QR-code token has been scanned.
     ///
     /// Returns `Some(username)` if the user has scanned and confirmed the QR
-    /// code, or `None` if still pending.
-    pub async fn check_qr_login(&self, token: Vec<u8>) -> Result<Option<String>, InvocationError> {
-        use ferogram_tl_types::{Cursor, Deserializable};
+    /// code, or `None` if still pending (the token has not been scanned yet,
+    /// or is a fresh [`LoginToken`] issued after a migration and needs
+    /// another poll).
+    ///
+    /// Returns [`SignInError::PasswordRequired`] if the account has 2FA
+    /// enabled; pass the contained token to [`Client::check_password`] to
+    /// finish. Returns [`SignInError::SignUpRequired`] if Telegram reports
+    /// the scanning account isn't registered (shouldn't normally happen for
+    /// QR login, but handled for completeness).
+    pub async fn check_qr_login(&self, token: Vec<u8>) -> Result<Option<String>, SignInError> {
         let req = tl::functions::auth::ImportLoginToken { token };
-        let body: Vec<u8> = self.rpc_call_raw(&req).await?;
+        self.import_login_token(&req).await
+    }
+
+    /// Shared `auth.importLoginToken` call/response handling for
+    /// [`Client::check_qr_login`], including 2FA and one level of DC
+    /// migration. Telegram does not migrate twice for this call, so a
+    /// second `MigrateTo` here is treated as a protocol error.
+    async fn import_login_token(
+        &self,
+        req: &tl::functions::auth::ImportLoginToken,
+    ) -> Result<Option<String>, SignInError> {
+        use ferogram_tl_types::{Cursor, Deserializable};
+
+        let body: Vec<u8> = match self.rpc_call_raw(req).await {
+            Ok(b) => b,
+            Err(e) if e.is("SESSION_PASSWORD_NEEDED") => {
+                tracing::info!("[ferogram::auth] 2FA password required to finish QR login");
+                let t = self.get_password_info().await?;
+                return Err(SignInError::PasswordRequired(Box::new(t)));
+            }
+            Err(e) => return Err(e.into()),
+        };
+
         let mut cur = Cursor::from_slice(&body);
-        match tl::enums::auth::LoginToken::deserialize(&mut cur)? {
-            tl::enums::auth::LoginToken::Success(s) => {
-                if let tl::enums::auth::Authorization::Authorization(a) = s.authorization {
+        match tl::enums::auth::LoginToken::deserialize(&mut cur).map_err(InvocationError::from)? {
+            tl::enums::auth::LoginToken::Success(s) => match s.authorization {
+                tl::enums::auth::Authorization::Authorization(a) => {
                     self.cache_user(&a.user).await;
                     let name = Self::extract_user_name(&a.user);
+                    tracing::info!(
+                        "[ferogram::auth] QR login complete; signed in: welcome, {name}"
+                    );
                     self.inner
                         .signed_in
                         .store(true, std::sync::atomic::Ordering::SeqCst);
                     let _ = self.sync_pts_state().await;
                     Ok(Some(name))
-                } else {
-                    Ok(None)
+                }
+                tl::enums::auth::Authorization::SignUpRequired(_) => {
+                    Err(SignInError::SignUpRequired)
+                }
+            },
+            // Not scanned yet.
+            tl::enums::auth::LoginToken::LoginToken(_) => Ok(None),
+            tl::enums::auth::LoginToken::MigrateTo(m) => {
+                tracing::debug!(
+                    "[ferogram::auth] QR login token belongs to DC{}; migrating",
+                    m.dc_id
+                );
+                self.migrate_to(m.dc_id).await?;
+                let req2 = tl::functions::auth::ImportLoginToken { token: m.token };
+                // Telegram does not migrate a second time for this call; a
+                // MigrateTo here would mean it did, so surface it as an
+                // error instead of looping.
+                match self.rpc_call_raw(&req2).await {
+                    Ok(body2) => {
+                        let mut cur2 = Cursor::from_slice(&body2);
+                        match tl::enums::auth::LoginToken::deserialize(&mut cur2)
+                            .map_err(InvocationError::from)?
+                        {
+                            tl::enums::auth::LoginToken::Success(s) => match s.authorization {
+                                tl::enums::auth::Authorization::Authorization(a) => {
+                                    self.cache_user(&a.user).await;
+                                    let name = Self::extract_user_name(&a.user);
+                                    tracing::info!(
+                                        "[ferogram::auth] QR login complete after migration; \
+                                         signed in: welcome, {name}"
+                                    );
+                                    self.inner
+                                        .signed_in
+                                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                                    let _ = self.sync_pts_state().await;
+                                    Ok(Some(name))
+                                }
+                                tl::enums::auth::Authorization::SignUpRequired(_) => {
+                                    Err(SignInError::SignUpRequired)
+                                }
+                            },
+                            tl::enums::auth::LoginToken::LoginToken(_) => Ok(None),
+                            tl::enums::auth::LoginToken::MigrateTo(_) => {
+                                Err(SignInError::Other(InvocationError::Deserialize(
+                                    "QR login: migrated twice for auth.importLoginToken".into(),
+                                )))
+                            }
+                        }
+                    }
+                    Err(e) if e.is("SESSION_PASSWORD_NEEDED") => {
+                        tracing::info!(
+                            "[ferogram::auth] 2FA password required to finish QR login \
+                             (after migration)"
+                        );
+                        let t = self.get_password_info().await?;
+                        Err(SignInError::PasswordRequired(Box::new(t)))
+                    }
+                    Err(e) => Err(e.into()),
                 }
             }
-            _ => Ok(None),
         }
     }
 }
