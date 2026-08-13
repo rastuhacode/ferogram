@@ -331,6 +331,97 @@ impl Client {
         self.synthetic_sent_from_short(input, peer, 0, 0)
     }
 
+    /// Best-effort extraction of a sent message from a raw `Updates`
+    /// response, for callers that don't have an [`InputMessage`] to fall
+    /// back on (e.g. [`crate::inline_iter::InlineResult::send`], where the
+    /// content was chosen server-side, not built by the caller).
+    ///
+    /// Unlike [`parse_send_response`](Self::parse_send_response), this
+    /// can't synthesize a placeholder message from short-form updates that
+    /// omit the full body, so it returns `None` in those cases instead of
+    /// guessing at fields it has no source for. `None` means the send
+    /// succeeded but Telegram's response didn't carry the full message,
+    /// not that the send failed - the caller already got `Ok` from the RPC
+    /// call before this runs.
+    pub(crate) async fn try_extract_updates_message(
+        &self,
+        body: &[u8],
+    ) -> Option<update::IncomingMessage> {
+        if body.len() < 4 {
+            return None;
+        }
+        let cid = u32::from_le_bytes(body[..4].try_into().unwrap());
+
+        // updates#74ae4240 / updatesCombined#725b04c3: full Updates container
+        if cid == 0x74ae4240 {
+            let mut cur = Cursor::from_slice(body);
+            if let Ok(tl::enums::Updates::Updates(u)) = tl::enums::Updates::deserialize(&mut cur) {
+                self.cache_users_and_chats(&u.users, &u.chats).await;
+                for upd in &u.updates {
+                    if let tl::enums::Update::NewMessage(nm) = upd {
+                        return Some(
+                            update::IncomingMessage::from_raw(nm.message.clone())
+                                .with_client(self.clone()),
+                        );
+                    }
+                    if let tl::enums::Update::NewChannelMessage(nm) = upd {
+                        return Some(
+                            update::IncomingMessage::from_raw(nm.message.clone())
+                                .with_client(self.clone()),
+                        );
+                    }
+                }
+            }
+        }
+        if cid == 0x725b04c3 {
+            let mut cur = Cursor::from_slice(body);
+            if let Ok(tl::enums::Updates::Combined(u)) = tl::enums::Updates::deserialize(&mut cur) {
+                self.cache_users_and_chats(&u.users, &u.chats).await;
+                for upd in &u.updates {
+                    if let tl::enums::Update::NewMessage(nm) = upd {
+                        return Some(
+                            update::IncomingMessage::from_raw(nm.message.clone())
+                                .with_client(self.clone()),
+                        );
+                    }
+                    if let tl::enums::Update::NewChannelMessage(nm) = upd {
+                        return Some(
+                            update::IncomingMessage::from_raw(nm.message.clone())
+                                .with_client(self.clone()),
+                        );
+                    }
+                }
+            }
+        }
+
+        // updateShort#78d4dec1: single update wrapped with a date, no
+        // separate users/chats vectors to cache.
+        if cid == 0x78d4dec1 {
+            let mut cur = Cursor::from_slice(&body[4..]);
+            if let Ok(short) = tl::types::UpdateShort::deserialize(&mut cur) {
+                match short.update {
+                    tl::enums::Update::NewMessage(nm) => {
+                        return Some(
+                            update::IncomingMessage::from_raw(nm.message).with_client(self.clone()),
+                        );
+                    }
+                    tl::enums::Update::NewChannelMessage(nm) => {
+                        return Some(
+                            update::IncomingMessage::from_raw(nm.message).with_client(self.clone()),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // updateShortSentMessage / updateShortMessage / updateShortChatMessage
+        // carry an id/date but not a full Message we can reconstruct without
+        // knowing the original InputMessage - honestly report "unknown"
+        // rather than fabricate content we don't have.
+        None
+    }
+
     #[allow(dead_code)]
     pub(crate) async fn extract_sent_message(
         &self,

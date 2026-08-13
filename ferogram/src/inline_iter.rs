@@ -18,7 +18,7 @@ use ferogram_tl_types as tl;
 use ferogram_tl_types::{Cursor, Deserializable};
 use tokio::sync::mpsc;
 
-use crate::update::{InlineQuery, Update};
+use crate::update::{IncomingMessage, InlineQuery, Update};
 use crate::{Client, InvocationError};
 
 // InlineQueryIter (bot side: receive)
@@ -76,7 +76,21 @@ impl InlineResult {
     }
 
     /// Send this inline result to the given peer.
-    pub async fn send(&self, peer: tl::enums::Peer) -> Result<(), InvocationError> {
+    ///
+    /// `messages.sendInlineBotResult` replies with the same `Updates` union
+    /// as `messages.sendMessage`, and the sent message is usually inside it
+    /// (a `NewMessage`/`NewChannelMessage` update). This extracts it when
+    /// present. Some Telegram-side paths (short-form updates that carry
+    /// only id/date, no full message body) don't include enough to
+    /// reconstruct the message without the original `InputMessage` used
+    /// for `send_message`, which doesn't exist here since the content was
+    /// chosen server-side from the inline result - `Ok(None)` in that case
+    /// means the send succeeded but the sent message wasn't returned, not
+    /// that it failed.
+    pub async fn send(
+        &self,
+        peer: tl::enums::Peer,
+    ) -> Result<Option<IncomingMessage>, InvocationError> {
         let input_peer = self
             .client
             .inner
@@ -99,8 +113,8 @@ impl InlineResult {
             quick_reply_shortcut: None,
             allow_paid_stars: None,
         };
-        self.client.rpc_call_raw(&req).await?;
-        Ok(())
+        let body: Vec<u8> = self.client.rpc_call_raw(&req).await?;
+        Ok(self.client.try_extract_updates_message(&body).await)
     }
 }
 
