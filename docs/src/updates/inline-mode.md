@@ -129,7 +129,7 @@ while let Some(result) = iter.next().await? {
 | `result.title()` | `Option<&str>` | Display title |
 | `result.description()` | `Option<&str>` | Display description |
 | `result.raw` | `tl::enums::BotInlineResult` | Raw TL object |
-| `result.send(peer)` | `async -> Option<IncomingMessage>` | Send this result to a chat; `None` if Telegram omitted the sent message from the response |
+| `result.send(peer)` | `async -> Option<IncomingMessage>` | Send this result to a chat (`peer` accepts username/ID/`Peer`/`InputPeer`, same as `send_message`); `None` if Telegram omitted the sent message from the response |
 
 ### `InlineResultIter` methods
 

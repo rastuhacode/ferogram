@@ -75,7 +75,9 @@ impl InlineResult {
         }
     }
 
-    /// Send this inline result to the given peer.
+    /// Send this inline result to `peer` - accepts a username, numeric
+    /// user/chat ID, or an already-resolved `Peer`/`InputPeer`, same as
+    /// [`Client::send_message`].
     ///
     /// `messages.sendInlineBotResult` replies with the same `Updates` union
     /// as `messages.sendMessage`, and the sent message is usually inside it
@@ -89,8 +91,9 @@ impl InlineResult {
     /// that it failed.
     pub async fn send(
         &self,
-        peer: tl::enums::Peer,
+        peer: impl Into<crate::PeerRef>,
     ) -> Result<Option<IncomingMessage>, InvocationError> {
+        let peer = peer.into().resolve(&self.client).await?;
         let input_peer = self
             .client
             .inner
