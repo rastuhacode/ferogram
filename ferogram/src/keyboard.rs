@@ -14,23 +14,31 @@
 
 use ferogram_tl_types as tl;
 
-// Button
+// Button (inline keyboard buttons)
 
 /// A single inline keyboard button.
+///
+/// Layer 229 split what used to be one `KeyboardButton` schema into two:
+/// `KeyboardButton`/`ButtonType` for reply keyboards, and
+/// `KeyboardInlineButton`/`InlineButtonType` for inline keyboards. This
+/// type only builds the latter - for reply-keyboard buttons, see
+/// [`ReplyButton`].
 #[derive(Clone)]
 pub struct Button {
-    inner: tl::enums::KeyboardButton,
+    text: String,
+    style: Option<tl::enums::KeyboardButtonStyle>,
+    kind: tl::enums::InlineButtonType,
 }
 
 impl Button {
     /// A button that sends a callback data payload when pressed.
     pub fn callback(text: impl Into<String>, data: impl Into<Vec<u8>>) -> Self {
         Self {
-            inner: tl::enums::KeyboardButton::Callback(tl::types::KeyboardButtonCallback {
+            text: text.into(),
+            style: None,
+            kind: tl::enums::InlineButtonType::Callback(tl::types::InlineButtonTypeCallback {
                 requires_password: false,
-                text: text.into(),
                 data: data.into(),
-                style: None,
             }),
         }
     }
@@ -38,15 +46,19 @@ impl Button {
     /// A button that opens a URL in the browser.
     pub fn url(text: impl Into<String>, url: impl Into<String>) -> Self {
         Self {
-            inner: tl::enums::KeyboardButton::Url(tl::types::KeyboardButtonUrl {
-                text: text.into(),
+            text: text.into(),
+            style: None,
+            kind: tl::enums::InlineButtonType::Url(tl::types::InlineButtonTypeUrl {
                 url: url.into(),
-                style: None,
             }),
         }
     }
 
     /// A button that opens a user-profile or bot link in Telegram.
+    ///
+    /// `bot` became optional in layer 229 (it was required before); passed
+    /// through as `Some` here to keep this constructor's signature the same
+    /// as before the upgrade.
     pub fn url_auth(
         text: impl Into<String>,
         url: impl Into<String>,
@@ -54,14 +66,14 @@ impl Button {
         bot: tl::enums::InputUser,
     ) -> Self {
         Self {
-            inner: tl::enums::KeyboardButton::InputKeyboardButtonUrlAuth(
-                tl::types::InputKeyboardButtonUrlAuth {
+            text: text.into(),
+            style: None,
+            kind: tl::enums::InlineButtonType::InputInlineButtonTypeUrlAuth(
+                tl::types::InputInlineButtonTypeUrlAuth {
                     request_write_access: false,
-                    text: text.into(),
                     fwd_text,
                     url: url.into(),
-                    bot,
-                    style: None,
+                    bot: Some(bot),
                 },
             ),
         }
@@ -70,92 +82,135 @@ impl Button {
     /// A button that switches to inline mode in the current chat.
     pub fn switch_inline(text: impl Into<String>, query: impl Into<String>) -> Self {
         Self {
-            inner: tl::enums::KeyboardButton::SwitchInline(tl::types::KeyboardButtonSwitchInline {
-                same_peer: true,
-                peer_types: None,
-                text: text.into(),
-                query: query.into(),
-                style: None,
-            }),
-        }
-    }
-
-    /// A plain text button (for reply keyboards, not inline).
-    pub fn text(label: impl Into<String>) -> Self {
-        Self {
-            inner: tl::enums::KeyboardButton::KeyboardButton(tl::types::KeyboardButton {
-                text: label.into(),
-                style: None,
-            }),
+            text: text.into(),
+            style: None,
+            kind: tl::enums::InlineButtonType::SwitchInline(
+                tl::types::InlineButtonTypeSwitchInline {
+                    same_peer: true,
+                    query: query.into(),
+                    peer_types: None,
+                },
+            ),
         }
     }
 
     /// A button that switches to inline mode in a different (user-chosen) chat.
     pub fn switch_elsewhere(text: impl Into<String>, query: impl Into<String>) -> Self {
         Self {
-            inner: tl::enums::KeyboardButton::SwitchInline(tl::types::KeyboardButtonSwitchInline {
-                same_peer: false,
-                peer_types: None,
-                text: text.into(),
-                query: query.into(),
-                style: None,
-            }),
+            text: text.into(),
+            style: None,
+            kind: tl::enums::InlineButtonType::SwitchInline(
+                tl::types::InlineButtonTypeSwitchInline {
+                    same_peer: false,
+                    query: query.into(),
+                    peer_types: None,
+                },
+            ),
         }
     }
 
     /// A button that opens a mini-app (full WebView with JS bridge).
     pub fn mini_app(text: impl Into<String>, url: impl Into<String>) -> Self {
         Self {
-            inner: tl::enums::KeyboardButton::WebView(tl::types::KeyboardButtonWebView {
-                text: text.into(),
+            text: text.into(),
+            style: None,
+            kind: tl::enums::InlineButtonType::WebView(tl::types::InlineButtonTypeWebView {
                 url: url.into(),
-                style: None,
             }),
         }
     }
 
-    /// A button that opens a simple mini-app (no JS bridge, no query_id).
-    pub fn mini_app_simple(text: impl Into<String>, url: impl Into<String>) -> Self {
+    // mini_app_simple() removed here: layer 229's `InlineButtonType` has no
+    // "simple webview" variant - `buttonTypeSimpleWebView` only exists
+    // under `ButtonType` now (reply keyboards). See
+    // [`ReplyButton::mini_app_simple`] for that. This is a real capability
+    // change from Telegram, not something ferogram is choosing to drop.
+
+    /// A button that launches a game (bots only).
+    pub fn game(text: impl Into<String>) -> Self {
         Self {
-            inner: tl::enums::KeyboardButton::SimpleWebView(
-                tl::types::KeyboardButtonSimpleWebView {
-                    text: text.into(),
-                    url: url.into(),
-                    style: None,
-                },
-            ),
+            text: text.into(),
+            style: None,
+            kind: tl::enums::InlineButtonType::Game,
         }
     }
 
-    /// A button that requests the user's phone number (reply keyboards only).
+    /// A buy button for payments (bots only).
+    pub fn buy(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            style: None,
+            kind: tl::enums::InlineButtonType::Buy,
+        }
+    }
+
+    /// A copy-to-clipboard button.
+    pub fn copy_text(text: impl Into<String>, copy_text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            style: None,
+            kind: tl::enums::InlineButtonType::Copy(tl::types::InlineButtonTypeCopy {
+                copy_text: copy_text.into(),
+            }),
+        }
+    }
+
+    /// Consume into the raw TL type.
+    pub fn into_raw(self) -> tl::enums::KeyboardInlineButton {
+        tl::enums::KeyboardInlineButton::KeyboardInlineButton(tl::types::KeyboardInlineButton {
+            style: self.style,
+            text: self.text,
+            r#type: self.kind,
+        })
+    }
+}
+
+// ReplyButton (reply keyboard buttons)
+
+/// A single reply-keyboard button (shown below the message input box, not
+/// inline). For inline keyboard buttons, see [`Button`].
+#[derive(Clone)]
+pub struct ReplyButton {
+    text: String,
+    style: Option<tl::enums::KeyboardButtonStyle>,
+    kind: tl::enums::ButtonType,
+}
+
+impl ReplyButton {
+    /// A plain text button.
+    pub fn text(label: impl Into<String>) -> Self {
+        Self {
+            text: label.into(),
+            style: None,
+            kind: tl::enums::ButtonType::Default,
+        }
+    }
+
+    /// A button that requests the user's phone number.
     pub fn request_phone(text: impl Into<String>) -> Self {
         Self {
-            inner: tl::enums::KeyboardButton::RequestPhone(tl::types::KeyboardButtonRequestPhone {
-                text: text.into(),
-                style: None,
-            }),
+            text: text.into(),
+            style: None,
+            kind: tl::enums::ButtonType::RequestPhone,
         }
     }
 
-    /// A button that requests the user's location (reply keyboards only).
+    /// A button that requests the user's location.
     pub fn request_geo(text: impl Into<String>) -> Self {
         Self {
-            inner: tl::enums::KeyboardButton::RequestGeoLocation(
-                tl::types::KeyboardButtonRequestGeoLocation {
-                    text: text.into(),
-                    style: None,
-                },
-            ),
+            text: text.into(),
+            style: None,
+            kind: tl::enums::ButtonType::RequestGeoLocation,
         }
     }
 
     /// A button that requests the user to create/share a poll.
     pub fn request_poll(text: impl Into<String>) -> Self {
         Self {
-            inner: tl::enums::KeyboardButton::RequestPoll(tl::types::KeyboardButtonRequestPoll {
+            text: text.into(),
+            style: None,
+            kind: tl::enums::ButtonType::RequestPoll(tl::types::ButtonTypeRequestPoll {
                 quiz: None,
-                text: text.into(),
-                style: None,
             }),
         }
     }
@@ -163,48 +218,37 @@ impl Button {
     /// A button that requests the user to create/share a quiz.
     pub fn request_quiz(text: impl Into<String>) -> Self {
         Self {
-            inner: tl::enums::KeyboardButton::RequestPoll(tl::types::KeyboardButtonRequestPoll {
+            text: text.into(),
+            style: None,
+            kind: tl::enums::ButtonType::RequestPoll(tl::types::ButtonTypeRequestPoll {
                 quiz: Some(true),
-                text: text.into(),
-                style: None,
             }),
         }
     }
 
-    /// A button that launches a game (bots only).
-    pub fn game(text: impl Into<String>) -> Self {
+    /// A button that opens a simple mini-app (no JS bridge, no query_id).
+    ///
+    /// As of layer 229 this only exists for reply keyboards - see the note
+    /// on [`Button`] about why it's not on the inline button builder
+    /// anymore. For an inline mini-app with the JS bridge, use
+    /// [`Button::mini_app`].
+    pub fn mini_app_simple(text: impl Into<String>, url: impl Into<String>) -> Self {
         Self {
-            inner: tl::enums::KeyboardButton::Game(tl::types::KeyboardButtonGame {
-                text: text.into(),
-                style: None,
-            }),
-        }
-    }
-
-    /// A buy button for payments (bots only).
-    pub fn buy(text: impl Into<String>) -> Self {
-        Self {
-            inner: tl::enums::KeyboardButton::Buy(tl::types::KeyboardButtonBuy {
-                text: text.into(),
-                style: None,
-            }),
-        }
-    }
-
-    /// A copy-to-clipboard button.
-    pub fn copy_text(text: impl Into<String>, copy_text: impl Into<String>) -> Self {
-        Self {
-            inner: tl::enums::KeyboardButton::Copy(tl::types::KeyboardButtonCopy {
-                text: text.into(),
-                copy_text: copy_text.into(),
-                style: None,
+            text: text.into(),
+            style: None,
+            kind: tl::enums::ButtonType::SimpleWebView(tl::types::ButtonTypeSimpleWebView {
+                url: url.into(),
             }),
         }
     }
 
     /// Consume into the raw TL type.
     pub fn into_raw(self) -> tl::enums::KeyboardButton {
-        self.inner
+        tl::enums::KeyboardButton::KeyboardButton(tl::types::KeyboardButton {
+            style: self.style,
+            text: self.text,
+            r#type: self.kind,
+        })
     }
 }
 
@@ -247,13 +291,21 @@ impl InlineKeyboard {
             .rows
             .into_iter()
             .map(|row| {
-                tl::enums::KeyboardButtonRow::KeyboardButtonRow(tl::types::KeyboardButtonRow {
-                    buttons: row.into_iter().map(Button::into_raw).collect(),
-                })
+                tl::enums::KeyboardInlineButtonRow::KeyboardInlineButtonRow(
+                    tl::types::KeyboardInlineButtonRow {
+                        buttons: row.into_iter().map(Button::into_raw).collect(),
+                    },
+                )
             })
             .collect();
 
-        tl::enums::ReplyMarkup::ReplyInlineMarkup(tl::types::ReplyInlineMarkup { rows })
+        // `force_reply` is a new layer-229 flag on this constructor; not
+        // yet exposed via a builder method here, defaulted off to match
+        // pre-upgrade behavior.
+        tl::enums::ReplyMarkup::ReplyInlineMarkup(tl::types::ReplyInlineMarkup {
+            force_reply: false,
+            rows,
+        })
     }
 }
 
@@ -268,7 +320,7 @@ impl From<InlineKeyboard> for tl::enums::ReplyMarkup {
 /// Builder for a reply keyboard (shown below the message input box).
 #[derive(Clone, Default)]
 pub struct ReplyKeyboard {
-    rows: Vec<Vec<Button>>,
+    rows: Vec<Vec<ReplyButton>>,
     resize: bool,
     single_use: bool,
     selective: bool,
@@ -281,7 +333,7 @@ impl ReplyKeyboard {
     }
 
     /// Append a row of text buttons.
-    pub fn row(mut self, buttons: impl IntoIterator<Item = Button>) -> Self {
+    pub fn row(mut self, buttons: impl IntoIterator<Item = ReplyButton>) -> Self {
         self.rows.push(buttons.into_iter().collect());
         self
     }
@@ -311,16 +363,20 @@ impl ReplyKeyboard {
             .into_iter()
             .map(|row| {
                 tl::enums::KeyboardButtonRow::KeyboardButtonRow(tl::types::KeyboardButtonRow {
-                    buttons: row.into_iter().map(Button::into_raw).collect(),
+                    buttons: row.into_iter().map(ReplyButton::into_raw).collect(),
                 })
             })
             .collect();
 
+        // `force_reply` is a new layer-229 flag on this constructor; not
+        // yet exposed via a builder method here, defaulted off to match
+        // pre-upgrade behavior.
         tl::enums::ReplyMarkup::ReplyKeyboardMarkup(tl::types::ReplyKeyboardMarkup {
             resize: self.resize,
             single_use: self.single_use,
             selective: self.selective,
             persistent: false,
+            force_reply: false,
             rows,
             placeholder: None,
         })

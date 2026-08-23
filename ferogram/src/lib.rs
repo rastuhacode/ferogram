@@ -329,7 +329,7 @@ pub use ferogram_connect::{RaceLeg, default_transport_race};
 pub use file_info::{FileInfo, detect_mime, file_info, file_info_from_path};
 pub use guest_chat::GuestChatQuery;
 pub use input_message::{CopyOptions, ForwardOptions, InputMessage, InvoiceOptions, LinkKind};
-pub use keyboard::{Button, InlineKeyboard, ReplyKeyboard};
+pub use keyboard::{Button, InlineKeyboard, ReplyButton, ReplyKeyboard};
 pub use media::{
     Document, DocumentThumb, Downloadable, MediaQuality, Photo, PhotoThumb, ProfilePhoto,
     RawLocation, Sticker, UploadedFile, VideoQualityInfo, video_cover,

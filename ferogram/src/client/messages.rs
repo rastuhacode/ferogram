@@ -712,6 +712,7 @@ impl Client {
             drop_author: opts.drop_author,
             drop_media_captions: opts.drop_media_captions,
             noforwards: opts.noforwards,
+            from_ephemeral: false, // new in layer 229; not yet exposed via ForwardOptions
             from_peer,
             id: message_ids.to_vec(),
             random_id: (0..message_ids.len()).map(|_| random_i64()).collect(),

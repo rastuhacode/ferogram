@@ -370,6 +370,7 @@ impl Client {
                 manage_direct_messages: false,
                 manage_ranks: false,
                 manage_linked_peers: false,
+                manage_welcome_messages: false, // new in layer 229; not granted by this preset - see note below
             }
         } else {
             tl::types::ChatAdminRights {
@@ -391,6 +392,7 @@ impl Client {
                 manage_direct_messages: false,
                 manage_ranks: false,
                 manage_linked_peers: false,
+                manage_welcome_messages: false,
             }
         };
 
@@ -966,6 +968,7 @@ impl AdminRightsBuilder {
             manage_direct_messages: false,
             manage_ranks: false,
             manage_linked_peers: false,
+            manage_welcome_messages: false, // new in layer 229; not yet exposed as a builder method
         })
     }
 }

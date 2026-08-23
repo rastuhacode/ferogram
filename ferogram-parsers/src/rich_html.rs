@@ -131,6 +131,7 @@ impl RichHtmlParser {
             let (text, credit) = split_cite(&body);
             return Some(vec![tl::enums::PageBlock::Blockquote(
                 tl::types::PageBlockBlockquote {
+                    collapsed: false,
                     text: parse_rich_html_inline(&text),
                     caption: parse_rich_html_inline(&credit),
                 },
@@ -185,12 +186,14 @@ impl RichHtmlParser {
             let (_, attrs) = parse_tag(tag_open.trim_start_matches('<'));
             let bordered = attrs.iter().any(|(k, _)| k == "bordered");
             let striped = attrs.iter().any(|(k, _)| k == "striped");
+            let compact = attrs.iter().any(|(k, _)| k == "compact");
             let body = self.consume_tag("table")?;
             let (title, rows) = parse_html_table(&body);
             return Some(vec![tl::enums::PageBlock::Table(
                 tl::types::PageBlockTable {
                     bordered,
                     striped,
+                    compact,
                     title,
                     rows,
                 },

@@ -1053,6 +1053,22 @@ impl IncomingMessage {
         Ok(users.into_iter().next().flatten())
     }
 
+    /// Returns `(text, callback_data)` if `btn` is a callback button.
+    ///
+    /// Layer 229 split button data across two levels: `text` lives on the
+    /// outer `KeyboardInlineButton`, `data` on the inner `InlineButtonType`
+    /// variant. This centralizes that lookup instead of repeating the
+    /// two-level match at every call site below.
+    fn as_callback_button(btn: &tl::enums::KeyboardInlineButton) -> Option<(&str, &[u8])> {
+        let tl::enums::KeyboardInlineButton::KeyboardInlineButton(b) = btn;
+        match &b.r#type {
+            tl::enums::InlineButtonType::Callback(cb) => {
+                Some((b.text.as_str(), cb.data.as_slice()))
+            }
+            _ => None,
+        }
+    }
+
     fn extract_callback_data(&self, row: usize, col: usize) -> Result<Vec<u8>, Error> {
         let markup = self.reply_markup().ok_or_else(|| {
             Error::Deserialize("click_button: message has no reply markup".into())
@@ -1072,7 +1088,7 @@ impl IncomingMessage {
             ))
         })?;
         let buttons = match kb_row {
-            tl::enums::KeyboardButtonRow::KeyboardButtonRow(r) => &r.buttons,
+            tl::enums::KeyboardInlineButtonRow::KeyboardInlineButtonRow(r) => &r.buttons,
         };
         let btn = buttons.get(col).ok_or_else(|| {
             Error::Deserialize(format!(
@@ -1080,12 +1096,13 @@ impl IncomingMessage {
                 buttons.len()
             ))
         })?;
-        match btn {
-            tl::enums::KeyboardButton::Callback(b) => Ok(b.data.clone()),
-            _ => Err(Error::Deserialize(format!(
-                "click_button: button at ({row}, {col}) is not a callback button"
-            ))),
-        }
+        Self::as_callback_button(btn)
+            .map(|(_, data)| data.to_vec())
+            .ok_or_else(|| {
+                Error::Deserialize(format!(
+                    "click_button: button at ({row}, {col}) is not a callback button"
+                ))
+            })
     }
 
     fn find_callback_data_by_text(&self, text: &str) -> Result<Vec<u8>, Error> {
@@ -1102,13 +1119,13 @@ impl IncomingMessage {
         };
         for row in rows {
             let buttons = match row {
-                tl::enums::KeyboardButtonRow::KeyboardButtonRow(r) => &r.buttons,
+                tl::enums::KeyboardInlineButtonRow::KeyboardInlineButtonRow(r) => &r.buttons,
             };
             for btn in buttons {
-                if let tl::enums::KeyboardButton::Callback(b) = btn
-                    && b.text == text
+                if let Some((btn_text, data)) = Self::as_callback_button(btn)
+                    && btn_text == text
                 {
-                    return Ok(b.data.clone());
+                    return Ok(data.to_vec());
                 }
             }
         }
@@ -1137,14 +1154,16 @@ impl IncomingMessage {
 
     fn iter_inline_buttons(
         &self,
-    ) -> impl Iterator<Item = (usize, usize, &tl::enums::KeyboardButton)> {
+    ) -> impl Iterator<Item = (usize, usize, &tl::enums::KeyboardInlineButton)> {
         let rows = match self.reply_markup() {
             Some(tl::enums::ReplyMarkup::ReplyInlineMarkup(kb)) => kb.rows.as_slice(),
             _ => &[],
         };
         rows.iter().enumerate().flat_map(|(r, row)| {
             let buttons = match row {
-                tl::enums::KeyboardButtonRow::KeyboardButtonRow(rb) => rb.buttons.as_slice(),
+                tl::enums::KeyboardInlineButtonRow::KeyboardInlineButtonRow(rb) => {
+                    rb.buttons.as_slice()
+                }
             };
             buttons.iter().enumerate().map(move |(c, btn)| (r, c, btn))
         })
@@ -1174,10 +1193,10 @@ impl IncomingMessage {
         F: Fn(&str, &[u8]) -> bool,
     {
         for (_, _, btn) in self.iter_inline_buttons() {
-            if let tl::enums::KeyboardButton::Callback(b) = btn
-                && predicate(&b.text, &b.data)
+            if let Some((text, data)) = Self::as_callback_button(btn)
+                && predicate(text, data)
             {
-                return self.invoke_click(client, b.data.clone()).await;
+                return self.invoke_click(client, data.to_vec()).await;
             }
         }
         Err(Error::Deserialize(
@@ -1207,21 +1226,15 @@ impl IncomingMessage {
                 }
             }
             ButtonFilter::Text(text) => self.iter_inline_buttons().find_map(|(r, c, btn)| {
-                if let tl::enums::KeyboardButton::Callback(b) = btn {
-                    if b.text == text { Some((r, c)) } else { None }
-                } else {
-                    None
+                match Self::as_callback_button(btn) {
+                    Some((btn_text, _)) if btn_text == text => Some((r, c)),
+                    _ => None,
                 }
             }),
             ButtonFilter::Data(data) => self.iter_inline_buttons().find_map(|(r, c, btn)| {
-                if let tl::enums::KeyboardButton::Callback(b) = btn {
-                    if b.data.as_slice() == data {
-                        Some((r, c))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+                match Self::as_callback_button(btn) {
+                    Some((_, btn_data)) if btn_data == data => Some((r, c)),
+                    _ => None,
                 }
             }),
         }
@@ -1234,17 +1247,11 @@ impl IncomingMessage {
     where
         F: Fn(&str, &[u8]) -> bool,
     {
-        self.iter_inline_buttons().find_map(|(r, c, btn)| {
-            if let tl::enums::KeyboardButton::Callback(b) = btn {
-                if predicate(&b.text, &b.data) {
-                    Some((r, c))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
+        self.iter_inline_buttons()
+            .find_map(|(r, c, btn)| match Self::as_callback_button(btn) {
+                Some((text, data)) if predicate(text, data) => Some((r, c)),
+                _ => None,
+            })
     }
 
     /// Press the inline button matching `filter`.
@@ -2232,6 +2239,7 @@ fn tl_constructor_id(upd: &tl::enums::Update) -> u32 {
         EncryptedChatTyping(_) => 0x1710f156,
         EncryptedMessagesRead(_) => 0x38fe25b7,
         Encryption(_) => 0xb4a2e88d,
+        EphemeralBotCallbackQuery(_) => 0x7c1079d6,
         FavedStickers => 0xe511996d,
         FolderPeers(_) => 0x19360dc0,
         GeoLiveViewed(_) => 0x871fb939,

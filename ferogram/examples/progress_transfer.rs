@@ -372,14 +372,19 @@ fn progress_bar(percent: f64) -> String {
 
 fn cancel_kb(msg_id: i32) -> tl::enums::ReplyMarkup {
     tl::enums::ReplyMarkup::ReplyInlineMarkup(tl::types::ReplyInlineMarkup {
-        rows: vec![tl::enums::KeyboardButtonRow::KeyboardButtonRow(
-            tl::types::KeyboardButtonRow {
-                buttons: vec![tl::enums::KeyboardButton::Callback(
-                    tl::types::KeyboardButtonCallback {
-                        requires_password: false,
+        force_reply: false,
+        rows: vec![tl::enums::KeyboardInlineButtonRow::KeyboardInlineButtonRow(
+            tl::types::KeyboardInlineButtonRow {
+                buttons: vec![tl::enums::KeyboardInlineButton::KeyboardInlineButton(
+                    tl::types::KeyboardInlineButton {
                         style: None,
                         text: "Cancel".to_string(),
-                        data: format!("cancel:{msg_id}").into_bytes(),
+                        r#type: tl::enums::InlineButtonType::Callback(
+                            tl::types::InlineButtonTypeCallback {
+                                requires_password: false,
+                                data: format!("cancel:{msg_id}").into_bytes(),
+                            },
+                        ),
                     },
                 )],
             },

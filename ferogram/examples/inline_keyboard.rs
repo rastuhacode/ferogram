@@ -124,32 +124,37 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn kb(rows: Vec<Vec<tl::enums::KeyboardButton>>) -> tl::enums::ReplyMarkup {
+fn kb(rows: Vec<Vec<tl::enums::KeyboardInlineButton>>) -> tl::enums::ReplyMarkup {
     tl::enums::ReplyMarkup::ReplyInlineMarkup(tl::types::ReplyInlineMarkup {
+        force_reply: false,
         rows: rows
             .into_iter()
             .map(|row| {
-                tl::enums::KeyboardButtonRow::KeyboardButtonRow(tl::types::KeyboardButtonRow {
-                    buttons: row,
-                })
+                tl::enums::KeyboardInlineButtonRow::KeyboardInlineButtonRow(
+                    tl::types::KeyboardInlineButtonRow { buttons: row },
+                )
             })
             .collect(),
     })
 }
 
-fn bc(text: &str, data: &str) -> tl::enums::KeyboardButton {
-    tl::enums::KeyboardButton::Callback(tl::types::KeyboardButtonCallback {
-        requires_password: false,
+fn bc(text: &str, data: &str) -> tl::enums::KeyboardInlineButton {
+    tl::enums::KeyboardInlineButton::KeyboardInlineButton(tl::types::KeyboardInlineButton {
         style: None,
         text: text.to_string(),
-        data: data.as_bytes().to_vec(),
+        r#type: tl::enums::InlineButtonType::Callback(tl::types::InlineButtonTypeCallback {
+            requires_password: false,
+            data: data.as_bytes().to_vec(),
+        }),
     })
 }
 
-fn bu(text: &str, url: &str) -> tl::enums::KeyboardButton {
-    tl::enums::KeyboardButton::Url(tl::types::KeyboardButtonUrl {
+fn bu(text: &str, url: &str) -> tl::enums::KeyboardInlineButton {
+    tl::enums::KeyboardInlineButton::KeyboardInlineButton(tl::types::KeyboardInlineButton {
         style: None,
         text: text.to_string(),
-        url: url.to_string(),
+        r#type: tl::enums::InlineButtonType::Url(tl::types::InlineButtonTypeUrl {
+            url: url.to_string(),
+        }),
     })
 }

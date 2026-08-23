@@ -233,6 +233,7 @@ impl<'a> RichMdParser<'a> {
         let rt = parse_rich_inline_md(&combined);
         vec![tl::enums::PageBlock::Blockquote(
             tl::types::PageBlockBlockquote {
+                collapsed: false,
                 text: rt,
                 caption: rt_empty(),
             },
@@ -381,6 +382,7 @@ impl<'a> RichMdParser<'a> {
         Some(tl::enums::PageBlock::Table(tl::types::PageBlockTable {
             bordered: false,
             striped: false,
+            compact: false,
             title: rt_empty(),
             rows,
         }))
@@ -536,6 +538,7 @@ impl<'a> RichMdParser<'a> {
             let (text, credit) = split_cite(&content);
             return Some(vec![tl::enums::PageBlock::Blockquote(
                 tl::types::PageBlockBlockquote {
+                    collapsed: false,
                     text: parse_rich_inline_md(&text),
                     caption: parse_rich_inline_md(&credit),
                 },
@@ -637,6 +640,7 @@ impl<'a> RichMdParser<'a> {
             );
             let bordered = attrs.iter().any(|(k, _)| k == "bordered");
             let striped = attrs.iter().any(|(k, _)| k == "striped");
+            let compact = attrs.iter().any(|(k, _)| k == "compact");
             self.pos += 1;
             let content = self.extract_multiline_tag("table");
             let (title, rows) = parse_html_table(&content);
@@ -644,6 +648,7 @@ impl<'a> RichMdParser<'a> {
                 tl::types::PageBlockTable {
                     bordered,
                     striped,
+                    compact,
                     title,
                     rows,
                 },

@@ -1,11 +1,18 @@
 # Inline Keyboards & Reply Markup
 
-`ferogram` ships with two high-level keyboard builders: `InlineKeyboard` and `ReplyKeyboard`: so you never have to construct raw TL types by hand.
+`ferogram` ships with high-level keyboard builders: `InlineKeyboard` and `ReplyKeyboard`, so you never have to construct raw TL types by hand.
+
+As of Telegram layer 229, inline-keyboard buttons and reply-keyboard buttons
+are two separate TL type trees (they used to share one `KeyboardButton`
+schema). `ferogram` mirrors that split: `Button` builds inline-keyboard
+buttons, `ReplyButton` builds reply-keyboard buttons. They are not
+interchangeable - `InlineKeyboard::row()` takes `Button`, `ReplyKeyboard::row()`
+takes `ReplyButton`.
 
 Both builders are in `ferogram::keyboard` and re-exported at the crate root:
 
 ```rust
-use ferogram::keyboard::{Button, InlineKeyboard, ReplyKeyboard};
+use ferogram::keyboard::{Button, InlineKeyboard, ReplyButton, ReplyKeyboard};
 ```
 
 ---
@@ -42,9 +49,7 @@ client.send_message(peer.clone(), InputMessage::text("Do you want to proceed?").
 
 ---
 
-## `Button`: all button types
-
-### Callback, URL, and common types
+## `Button`: inline-keyboard button types
 
 ```rust
 // Sends data to your bot as Update::CallbackQuery (max 64 bytes)
@@ -66,13 +71,7 @@ Button::switch_inline("🔍 Search here", "default query")
 Button::switch_elsewhere("📤 Share", "")
 
 // Telegram Mini App with full JS bridge
-Button::webview("🚀 Open App", "https://myapp.example.com")
-
-// Simple webview without JS bridge
-Button::simple_webview("ℹ️ Info", "https://info.example.com")
-
-// Plain text for reply keyboards
-Button::text("📸 Send photo")
+Button::mini_app("🚀 Open App", "https://myapp.example.com")
 
 // Launch a Telegram game (bots only)
 Button::game("🎮 Play")
@@ -81,27 +80,48 @@ Button::game("🎮 Play")
 Button::buy("💳 Pay $4.99")
 ```
 
-### Reply-keyboard-only buttons
+There is no inline "simple webview" (no-JS-bridge) button as of layer 229 -
+Telegram moved that variant to reply keyboards only. See
+`ReplyButton::mini_app_simple` below.
+
+### Escape hatch
 
 ```rust
+// Get the underlying tl::enums::KeyboardInlineButton
+let raw = Button::callback("x", b"x").into_raw();
+```
+
+---
+
+## `ReplyButton`: reply-keyboard button types
+
+```rust
+use ferogram::keyboard::ReplyButton;
+
+// Plain text
+ReplyButton::text("📸 Send photo")
+
 // Shares user's phone number on tap
-Button::request_phone("📞 Share my number")
+ReplyButton::request_phone("📞 Share my number")
 
 // Shares user's location on tap
-Button::request_geo("📍 Share location")
+ReplyButton::request_geo("📍 Share location")
 
 // Opens poll creation interface
-Button::request_poll("📊 Create poll")
+ReplyButton::request_poll("📊 Create poll")
 
 // Forces quiz mode in poll creator
-Button::request_quiz("🧠 Create quiz")
+ReplyButton::request_quiz("🧠 Create quiz")
+
+// Simple webview without JS bridge (reply-keyboard only, layer 229+)
+ReplyButton::mini_app_simple("ℹ️ Info", "https://info.example.com")
 ```
 
 ### Escape hatch
 
 ```rust
 // Get the underlying tl::enums::KeyboardButton
-let raw = Button::callback("x", b"x").into_raw();
+let raw = ReplyButton::text("x").into_raw();
 ```
 
 ---
@@ -112,14 +132,14 @@ A reply keyboard replaces the user's text input keyboard until dismissed.
 The user's tap arrives as a plain-text `Update::NewMessage`.
 
 ```rust
-use ferogram::keyboard::{Button, ReplyKeyboard};
+use ferogram::keyboard::{ReplyButton, ReplyKeyboard};
 
 let kb = ReplyKeyboard::new()
     .row([
-        Button::text("📸 Photo"),
-        Button::text("📄 Document"),
+        ReplyButton::text("📸 Photo"),
+        ReplyButton::text("📄 Document"),
     ])
-    .row([Button::text("❌ Cancel")])
+    .row([ReplyButton::text("❌ Cancel")])
     .resize()      // shrink to fit content (recommended)
     .single_use(); // hide after one press
 
@@ -180,38 +200,43 @@ client.answer_callback_query(cb.query_id, Some("⛔ Access denied"), true).await
 
 ## Legacy raw TL pattern (still works)
 
-If you prefer constructing TL types directly:
-
-```rust
-fn inline_kb(rows: Vec<Vec<tl::enums::KeyboardButton>>) -> tl::enums::ReplyMarkup {
+If you prefer constructing TL types directly. Note the two-level shape as of
+layer 229: the button's `text` lives on the outer `KeyboardInlineButton`,
+while type-specific data (like callback `data`) lives on the inner
+`InlineButtonType` variant.
 
 ```rust
 use ferogram_tl_types as tl;
 
-fn inline_kb(rows: Vec<Vec<tl::enums::KeyboardButton>>) -> tl::enums::ReplyMarkup {
+fn inline_kb(rows: Vec<Vec<tl::enums::KeyboardInlineButton>>) -> tl::enums::ReplyMarkup {
     tl::enums::ReplyMarkup::ReplyInlineMarkup(tl::types::ReplyInlineMarkup {
+        force_reply: false,
         rows: rows.into_iter().map(|buttons|
-            tl::enums::KeyboardButtonRow::KeyboardButtonRow(
-                tl::types::KeyboardButtonRow { buttons }
+            tl::enums::KeyboardInlineButtonRow::KeyboardInlineButtonRow(
+                tl::types::KeyboardInlineButtonRow { buttons }
             )
         ).collect(),
     })
 }
 
-fn btn_cb(text: &str, data: &str) -> tl::enums::KeyboardButton {
-    tl::enums::KeyboardButton::Callback(tl::types::KeyboardButtonCallback {
-        requires_password: false,
-        style:             None,
-        text:              text.into(),
-        data:              data.as_bytes().to_vec(),
+fn btn_cb(text: &str, data: &str) -> tl::enums::KeyboardInlineButton {
+    tl::enums::KeyboardInlineButton::KeyboardInlineButton(tl::types::KeyboardInlineButton {
+        style: None,
+        text:  text.into(),
+        r#type: tl::enums::InlineButtonType::Callback(tl::types::InlineButtonTypeCallback {
+            requires_password: false,
+            data: data.as_bytes().to_vec(),
+        }),
     })
 }
 
-fn btn_url(text: &str, url: &str) -> tl::enums::KeyboardButton {
-    tl::enums::KeyboardButton::Url(tl::types::KeyboardButtonUrl {
+fn btn_url(text: &str, url: &str) -> tl::enums::KeyboardInlineButton {
+    tl::enums::KeyboardInlineButton::KeyboardInlineButton(tl::types::KeyboardInlineButton {
         style: None,
         text:  text.into(),
-        url:   url.into(),
+        r#type: tl::enums::InlineButtonType::Url(tl::types::InlineButtonTypeUrl {
+            url: url.into(),
+        }),
     })
 }
 ```
@@ -232,41 +257,59 @@ let msg = InputMessage::text(text)
 client.send_message(peer, msg).await?;
 ```
 
-## All button types
+## All button types (raw TL, layer 229)
+
+### Inline keyboard (`InlineButtonType`, wrapped in `KeyboardInlineButton`)
 
 | Type | Constructor | Description |
 |---|---|---|
-| Callback | `KeyboardButtonCallback` | Triggers `CallbackQuery` with custom data |
-| URL | `KeyboardButtonUrl` | Opens a URL in the browser |
-| Web App | `KeyboardButtonSimpleWebView` | Opens a Telegram Web App |
-| Switch Inline | `KeyboardButtonSwitchInline` | Opens inline mode with a query |
-| Request Phone | `KeyboardButtonRequestPhone` | Requests the user's phone number |
-| Request Location | `KeyboardButtonRequestGeoLocation` | Requests location |
-| Request Poll | `KeyboardButtonRequestPoll` | Opens poll creator |
-| Request Peer | `KeyboardButtonRequestPeer` | Requests peer selection |
-| Game | `KeyboardButtonGame` | Opens a Telegram game |
-| Buy | `KeyboardButtonBuy` | Purchase button for payments |
-| Copy | `KeyboardButtonCopy` | Copies text to clipboard |
+| Callback | `InlineButtonTypeCallback` | Triggers `CallbackQuery` with custom data |
+| URL | `InlineButtonTypeUrl` | Opens a URL in the browser |
+| URL Auth | `InputInlineButtonTypeUrlAuth` | Login-widget style authenticated URL |
+| WebView | `InlineButtonTypeWebView` | Opens a Telegram Mini App (JS bridge) |
+| Switch Inline | `InlineButtonTypeSwitchInline` | Opens inline mode with a query |
+| User Profile | `InputInlineButtonTypeUserProfile` | Opens a user's profile |
+| Game | `InlineButtonTypeGame` | Opens a Telegram game |
+| Buy | `InlineButtonTypeBuy` | Purchase button for payments |
+| Copy | `InlineButtonTypeCopy` | Copies text to clipboard |
+| Disabled | `InlineButtonTypeDisabled` | Renders greyed out, not tappable |
 
-### Switch Inline button
+### Reply keyboard (`ButtonType`, wrapped in `KeyboardButton`)
+
+| Type | Constructor | Description |
+|---|---|---|
+| Text | `ButtonTypeDefault` | Plain text button |
+| Request Phone | `ButtonTypeRequestPhone` | Requests the user's phone number |
+| Request Location | `ButtonTypeRequestGeoLocation` | Requests location |
+| Request Poll | `ButtonTypeRequestPoll` | Opens poll creator |
+| Request Peer | `InputButtonTypeRequestPeer` | Requests peer selection |
+| Simple WebView | `ButtonTypeSimpleWebView` | Opens a webview without a JS bridge |
+
+### Switch Inline button (raw)
 
 Opens the bot's inline mode in the current or another chat:
 
 ```rust
-tl::enums::KeyboardButton::SwitchInline(tl::types::KeyboardButtonSwitchInline {
-    same_peer:  false, // false = let user pick any chat
-    text:       "🔍 Search with me".into(),
-    query:      "default query".into(),
-    peer_types: None,
+tl::enums::KeyboardInlineButton::KeyboardInlineButton(tl::types::KeyboardInlineButton {
+    style: None,
+    text:  "🔍 Search with me".into(),
+    r#type: tl::enums::InlineButtonType::SwitchInline(tl::types::InlineButtonTypeSwitchInline {
+        same_peer:  false, // false = let user pick any chat
+        query:      "default query".into(),
+        peer_types: None,
+    }),
 })
 ```
 
-### Web App button
+### Simple WebView button (raw, reply-keyboard only)
 
 ```rust
-tl::enums::KeyboardButton::SimpleWebView(tl::types::KeyboardButtonSimpleWebView {
-    text: "Open App".into(),
-    url:  "https://myapp.example.com".into(),
+tl::enums::KeyboardButton::KeyboardButton(tl::types::KeyboardButton {
+    style: None,
+    text:  "Open App".into(),
+    r#type: tl::enums::ButtonType::SimpleWebView(tl::types::ButtonTypeSimpleWebView {
+        url: "https://myapp.example.com".into(),
+    }),
 })
 ```
 
@@ -279,26 +322,33 @@ let reply_kb = tl::enums::ReplyMarkup::ReplyKeyboardMarkup(
         single_use:  true,       // hide after one tap
         selective:   false,      // show to everyone
         persistent:  false,      // don't keep after message
+        force_reply: false,      // layer 229; not covered elsewhere in this doc
         placeholder: Some("Choose an option…".into()),
         rows: vec![
             tl::enums::KeyboardButtonRow::KeyboardButtonRow(
                 tl::types::KeyboardButtonRow {
                     buttons: vec![
-                        tl::enums::KeyboardButton::KeyboardButton(
-                            tl::types::KeyboardButton { text: "🍕 Pizza".into() }
-                        ),
-                        tl::enums::KeyboardButton::KeyboardButton(
-                            tl::types::KeyboardButton { text: "🍔 Burger".into() }
-                        ),
+                        tl::enums::KeyboardButton::KeyboardButton(tl::types::KeyboardButton {
+                            style: None,
+                            text: "🍕 Pizza".into(),
+                            r#type: tl::enums::ButtonType::Default(tl::types::ButtonTypeDefault {}),
+                        }),
+                        tl::enums::KeyboardButton::KeyboardButton(tl::types::KeyboardButton {
+                            style: None,
+                            text: "🍔 Burger".into(),
+                            r#type: tl::enums::ButtonType::Default(tl::types::ButtonTypeDefault {}),
+                        }),
                     ]
                 }
             ),
             tl::enums::KeyboardButtonRow::KeyboardButtonRow(
                 tl::types::KeyboardButtonRow {
                     buttons: vec![
-                        tl::enums::KeyboardButton::KeyboardButton(
-                            tl::types::KeyboardButton { text: "❌ Cancel".into() }
-                        ),
+                        tl::enums::KeyboardButton::KeyboardButton(tl::types::KeyboardButton {
+                            style: None,
+                            text: "❌ Cancel".into(),
+                            r#type: tl::enums::ButtonType::Default(tl::types::ButtonTypeDefault {}),
+                        }),
                     ]
                 }
             ),
