@@ -323,7 +323,7 @@ impl DcPool {
     ) -> Result<Vec<u8>, InvocationError> {
         let (tx, rx) = oneshot::channel();
         let send_result = slot.rpc_tx.send(RpcEnqueue { body, tx }).await;
-        let result = if send_result.is_err() {
+        if send_result.is_err() {
             slot.alive.store(false, Ordering::Release);
             Err(InvocationError::Deserialize(
                 "worker sender task shut down".into(),
@@ -338,8 +338,7 @@ impl DcPool {
                     ))
                 }
             }
-        };
-        result
+        }
     }
 
     /// Invoke a raw RPC call on an already initialized slot of the given DC.
